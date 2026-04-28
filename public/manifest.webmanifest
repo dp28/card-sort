@@ -1,0 +1,19 @@
+{
+  "name": "Card Sort",
+  "short_name": "Card Sort",
+  "description": "Sort difficult lists through quick pairwise choices.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#101014",
+  "theme_color": "#8b5cf6",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/card-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
