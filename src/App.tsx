@@ -471,14 +471,13 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="hero">
-        <p className="eyebrow">Pairwise card sorting</p>
-        <h1>Sort a tricky list by choosing between two cards at a time.</h1>
-        <p>
-          Add your options, then make simple head-to-head choices. Progress is saved locally, completed sorts are kept
-          in your private history, and share links include only the current list.
-        </p>
-      </section>
+      <header className="app-header">
+        <div>
+          <p className="eyebrow">Pairwise sorter</p>
+          <h1>Card Sort</h1>
+        </div>
+        <p>Rank a list through quick head-to-head choices. Progress stays local unless you copy a share link.</p>
+      </header>
 
       {state.phase === 'entry' && (
         <section className="panel">
