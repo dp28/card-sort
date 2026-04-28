@@ -37,4 +37,14 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ["public/sw.js"],
+    languageOptions: {
+      globals: {
+        caches: "readonly",
+        fetch: "readonly",
+        self: "readonly",
+      },
+    },
+  },
 );

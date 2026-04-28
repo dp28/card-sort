@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 
 const STORAGE_KEY = 'card-sort-state-v1';
+const HISTORY_KEY = 'card-sort-history-v1';
 const SHARE_PARAM = 'state';
+const MAX_HISTORY_ENTRIES = 50;
 const canUseRandomUuid = typeof crypto !== 'undefined' && 'randomUUID' in crypto;
 
 type AppPhase = 'entry' | 'sorting' | 'done';
@@ -14,12 +16,14 @@ type Comparison = {
 
 type SortState = {
   version: 1;
+  sessionId: string;
   items: SortItem[];
   sortedIds: string[];
   pendingIds: string[];
   active: ActiveInsertion | null;
   comparisons: Comparison[];
   phase: AppPhase;
+  historyRecorded: boolean;
 };
 
 type SortItem = {
@@ -33,25 +37,37 @@ type ActiveInsertion = {
   high: number;
 };
 
+type HistoryEntry = {
+  id: string;
+  completedAt: string;
+  items: string[];
+  orderedItems: string[];
+  comparisons: number;
+};
+
 type ShareState = Pick<SortState, 'items' | 'sortedIds' | 'pendingIds' | 'active' | 'comparisons' | 'phase'>;
+
+function createId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${canUseRandomUuid ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`;
+}
 
 function createInitialState(): SortState {
   return {
     version: 1,
+    sessionId: createId('sort'),
     items: [],
     sortedIds: [],
     pendingIds: [],
     active: null,
     comparisons: [],
     phase: 'entry',
+    historyRecorded: false,
   };
 }
 
 function createItem(label: string, index: number): SortItem {
   return {
-    id: `${Date.now().toString(36)}-${index}-${
-      canUseRandomUuid ? crypto.randomUUID() : Math.random().toString(36).slice(2)
-    }`,
+    id: `${createId('item')}-${index}`,
     label,
   };
 }
@@ -75,13 +91,15 @@ function normalizeItems(input: string): SortItem[] {
 }
 
 function startSorting(items: SortItem[]): SortState {
+  const initialState = createInitialState();
+
   if (items.length === 0) {
-    return createInitialState();
+    return initialState;
   }
 
   if (items.length === 1) {
     return {
-      ...createInitialState(),
+      ...initialState,
       items,
       sortedIds: [items[0].id],
       phase: 'done',
@@ -89,7 +107,7 @@ function startSorting(items: SortItem[]): SortState {
   }
 
   return {
-    ...createInitialState(),
+    ...initialState,
     items,
     sortedIds: [items[0].id],
     pendingIds: items.slice(1).map((item) => item.id),
@@ -188,7 +206,25 @@ function getOrderedItems(state: SortState): SortItem[] {
   return state.sortedIds.map((id) => byId.get(id)).filter((item): item is SortItem => Boolean(item));
 }
 
-function sanitizeState(value: unknown): SortState | null {
+function sanitizeComparisons(value: unknown, itemIds: Set<string>): Comparison[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(
+    (comparison): comparison is Comparison =>
+      Boolean(comparison) &&
+      typeof comparison === 'object' &&
+      typeof (comparison as Comparison).candidateId === 'string' &&
+      typeof (comparison as Comparison).pivotId === 'string' &&
+      typeof (comparison as Comparison).winnerId === 'string' &&
+      itemIds.has((comparison as Comparison).candidateId) &&
+      itemIds.has((comparison as Comparison).pivotId) &&
+      itemIds.has((comparison as Comparison).winnerId),
+  );
+}
+
+function sanitizeState(value: unknown, suppressCompletedHistory = false): SortState | null {
   if (!value || typeof value !== 'object') {
     return null;
   }
@@ -215,7 +251,11 @@ function sanitizeState(value: unknown): SortState | null {
     itemIds.has(candidate.active.itemId) &&
     typeof candidate.active.low === 'number' &&
     typeof candidate.active.high === 'number'
-      ? candidate.active
+      ? {
+          itemId: candidate.active.itemId,
+          low: Math.max(0, Math.min(candidate.active.low, sortedIds.length)),
+          high: Math.max(0, Math.min(candidate.active.high, sortedIds.length)),
+        }
       : null;
   const phase: AppPhase =
     candidate.phase === 'sorting' || candidate.phase === 'done' || candidate.phase === 'entry'
@@ -226,12 +266,14 @@ function sanitizeState(value: unknown): SortState | null {
 
   return ensureActiveInsertion({
     version: 1,
+    sessionId: typeof candidate.sessionId === 'string' ? candidate.sessionId : createId('sort'),
     items,
     sortedIds,
     pendingIds,
     active,
-    comparisons: Array.isArray(candidate.comparisons) ? candidate.comparisons : [],
+    comparisons: sanitizeComparisons(candidate.comparisons, itemIds),
     phase,
+    historyRecorded: Boolean(candidate.historyRecorded) || (suppressCompletedHistory && phase === 'done'),
   });
 }
 
@@ -257,37 +299,89 @@ function decodeShareState(encoded: string): SortState | null {
     const binary = atob(padded);
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     const json = new TextDecoder().decode(bytes);
-    return sanitizeState(JSON.parse(json));
+    return sanitizeState(JSON.parse(json), true);
   } catch {
     return null;
   }
 }
 
-function loadInitialState(): SortState {
+function loadInitialSnapshot(): { state: SortState; rawItems: string } {
   const params = new URLSearchParams(window.location.search);
   const sharedState = params.get(SHARE_PARAM);
 
   if (sharedState) {
     const decoded = decodeShareState(sharedState);
     if (decoded) {
-      return decoded;
+      return {
+        state: decoded,
+        rawItems: decoded.items.map((item) => item.label).join('\n'),
+      };
     }
   }
 
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? sanitizeState(JSON.parse(stored)) ?? createInitialState() : createInitialState();
+    const state = stored ? sanitizeState(JSON.parse(stored)) ?? createInitialState() : createInitialState();
+    return {
+      state,
+      rawItems: state.items.map((item) => item.label).join('\n'),
+    };
   } catch {
-    return createInitialState();
+    const state = createInitialState();
+    return { state, rawItems: '' };
   }
 }
 
+function sanitizeHistory(value: unknown): HistoryEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(
+      (entry): entry is HistoryEntry =>
+        Boolean(entry) &&
+        typeof entry === 'object' &&
+        typeof (entry as HistoryEntry).id === 'string' &&
+        typeof (entry as HistoryEntry).completedAt === 'string' &&
+        Array.isArray((entry as HistoryEntry).items) &&
+        Array.isArray((entry as HistoryEntry).orderedItems) &&
+        typeof (entry as HistoryEntry).comparisons === 'number',
+    )
+    .slice(0, MAX_HISTORY_ENTRIES);
+}
+
+function loadHistory(): HistoryEntry[] {
+  try {
+    const stored = localStorage.getItem(HISTORY_KEY);
+    return stored ? sanitizeHistory(JSON.parse(stored)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function createHistoryEntry(state: SortState): HistoryEntry {
+  return {
+    id: state.sessionId,
+    completedAt: new Date().toISOString(),
+    items: state.items.map((item) => item.label),
+    orderedItems: getOrderedItems(state).map((item) => item.label),
+    comparisons: state.comparisons.length,
+  };
+}
+
+function formatCompletedAt(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
+}
+
 function App() {
-  const [state, setState] = useState<SortState>(() => ensureActiveInsertion(loadInitialState()));
-  const [rawItems, setRawItems] = useState(() => {
-    const initialState = loadInitialState();
-    return initialState.items.map((item) => item.label).join('\n');
-  });
+  const [initialSnapshot] = useState(loadInitialSnapshot);
+  const [state, setState] = useState<SortState>(() => initialSnapshot.state);
+  const [rawItems, setRawItems] = useState(() => initialSnapshot.rawItems);
+  const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [shareUrl, setShareUrl] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
   const currentPair = getCurrentPair(state);
@@ -296,23 +390,45 @@ function App() {
   const placedItems = state.sortedIds.length;
   const completedComparisons = state.comparisons.length;
   const progress = totalItems <= 1 ? 100 : Math.min(100, Math.round((placedItems / totalItems) * 100));
+  const uniqueItemCount = normalizeItems(rawItems).length;
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
+
+  useEffect(() => {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  }, [history]);
+
+  function saveCompletedSort(nextState: SortState): SortState {
+    if (nextState.phase !== 'done' || nextState.historyRecorded) {
+      return nextState;
+    }
+
+    const entry = createHistoryEntry(nextState);
+    setHistory((currentHistory) => {
+      const withoutDuplicate = currentHistory.filter((historyEntry) => historyEntry.id !== entry.id);
+      return [entry, ...withoutDuplicate].slice(0, MAX_HISTORY_ENTRIES);
+    });
+
+    return {
+      ...nextState,
+      historyRecorded: true,
+    };
+  }
 
   function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const items = normalizeItems(rawItems);
     setShareUrl('');
     setCopyStatus('');
-    setState(ensureActiveInsertion(startSorting(items)));
+    setState(saveCompletedSort(ensureActiveInsertion(startSorting(items))));
   }
 
   function handleChoose(winnerId: string) {
     setShareUrl('');
     setCopyStatus('');
-    setState((currentState) => recordChoice(currentState, winnerId));
+    setState((currentState) => saveCompletedSort(recordChoice(currentState, winnerId)));
   }
 
   function handleEditList() {
@@ -331,6 +447,10 @@ function App() {
     setShareUrl('');
     setCopyStatus('');
     setState(createInitialState());
+  }
+
+  function handleClearHistory() {
+    setHistory([]);
   }
 
   async function handleShare() {
@@ -355,15 +475,18 @@ function App() {
         <p className="eyebrow">Pairwise card sorting</p>
         <h1>Sort a tricky list by choosing between two cards at a time.</h1>
         <p>
-          Add your options, then make simple head-to-head choices. Your progress is saved on this device, and you can
-          share the current state with a link.
+          Add your options, then make simple head-to-head choices. Progress is saved locally, completed sorts are kept
+          in your private history, and share links include only the current list.
         </p>
       </section>
 
       {state.phase === 'entry' && (
         <section className="panel">
           <form onSubmit={handleStart}>
-            <label htmlFor="items">Items to sort</label>
+            <div>
+              <label htmlFor="items">Items to sort</label>
+              <p className="field-hint">Enter one item per line. Duplicates are removed before sorting.</p>
+            </div>
             <textarea
               id="items"
               value={rawItems}
@@ -372,7 +495,7 @@ function App() {
               rows={10}
             />
             <div className="form-actions">
-              <button type="submit" className="primary-button" disabled={normalizeItems(rawItems).length < 2}>
+              <button type="submit" className="primary-button" disabled={uniqueItemCount < 2}>
                 Start sorting
               </button>
               {state.items.length > 0 && (
@@ -460,6 +583,42 @@ function App() {
           {shareUrl && <input readOnly value={shareUrl} onFocus={(event) => event.target.select()} />}
         </aside>
       )}
+
+      <section className="panel history-panel">
+        <div className="history-heading">
+          <div>
+            <p className="eyebrow">Local history</p>
+            <h2>Past sorted lists</h2>
+          </div>
+          {history.length > 0 && (
+            <button type="button" className="ghost-button compact-button" onClick={handleClearHistory}>
+              Clear
+            </button>
+          )}
+        </div>
+
+        {history.length === 0 ? (
+          <p className="empty-history">Completed sorts will appear here on this device.</p>
+        ) : (
+          <div className="history-list">
+            {history.map((entry) => (
+              <article className="history-card" key={entry.id}>
+                <div>
+                  <h3>{formatCompletedAt(entry.completedAt)}</h3>
+                  <p>
+                    {entry.items.length} items; {entry.comparisons} comparisons
+                  </p>
+                </div>
+                <ol>
+                  {entry.orderedItems.map((item, index) => (
+                    <li key={`${entry.id}-${item}-${index}`}>{item}</li>
+                  ))}
+                </ol>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </main>
   );
 }
