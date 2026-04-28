@@ -189,6 +189,12 @@ textarea:focus,
   color: #fecdd3;
 }
 
+.compact-button {
+  min-height: 2.35rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.9rem;
+}
+
 .primary-button:hover:not(:disabled),
 .ghost-button:hover:not(:disabled),
 .danger-button:hover:not(:disabled),
@@ -314,6 +320,14 @@ textarea:focus,
   margin-bottom: 0.6rem;
   font-size: 0.92rem;
   font-weight: 500;
+}
+
+.history-card-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.75rem;
 }
 
 .history-card ol {

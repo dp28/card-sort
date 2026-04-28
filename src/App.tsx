@@ -425,6 +425,15 @@ function App() {
     setState(saveCompletedSort(ensureActiveInsertion(startSorting(items))));
   }
 
+  function handleResort(labels: string[]) {
+    const nextRawItems = labels.join('\n');
+    const items = normalizeItems(nextRawItems);
+    setRawItems(nextRawItems);
+    setShareUrl('');
+    setCopyStatus('');
+    setState(saveCompletedSort(ensureActiveInsertion(startSorting(items))));
+  }
+
   function handleChoose(winnerId: string) {
     setShareUrl('');
     setCopyStatus('');
@@ -539,6 +548,9 @@ function App() {
             <button type="button" className="ghost-button" onClick={handleShare}>
               Copy share link
             </button>
+            <button type="button" className="ghost-button" onClick={() => handleResort(state.items.map((item) => item.label))}>
+              Re-sort this list
+            </button>
             <button type="button" className="ghost-button" onClick={handleEditList}>
               Edit list
             </button>
@@ -568,6 +580,9 @@ function App() {
             </button>
             <button type="button" className="ghost-button" onClick={handleEditList}>
               Sort another list
+            </button>
+            <button type="button" className="ghost-button" onClick={() => handleResort(state.items.map((item) => item.label))}>
+              Re-sort this list
             </button>
             <button type="button" className="ghost-button" onClick={handleReset}>
               Start over
@@ -602,11 +617,16 @@ function App() {
           <div className="history-list">
             {history.map((entry) => (
               <article className="history-card" key={entry.id}>
-                <div>
-                  <h3>{formatCompletedAt(entry.completedAt)}</h3>
-                  <p>
-                    {entry.items.length} items; {entry.comparisons} comparisons
-                  </p>
+                <div className="history-card-header">
+                  <div>
+                    <h3>{formatCompletedAt(entry.completedAt)}</h3>
+                    <p>
+                      {entry.items.length} items; {entry.comparisons} comparisons
+                    </p>
+                  </div>
+                  <button type="button" className="ghost-button compact-button" onClick={() => handleResort(entry.items)}>
+                    Re-sort
+                  </button>
                 </div>
                 <ol>
                   {entry.orderedItems.map((item, index) => (
