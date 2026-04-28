@@ -49,4 +49,12 @@ The workflow in `.github/workflows/deploy.yml` deploys `main` to Cloudflare Page
     - Account resources: include the account that owns `card-sort`
   - Copy the token value once and store it as the GitHub secret.
 
-The workflow assumes the Cloudflare Pages project is named `card-sort`.
+The workflow deploys to the Cloudflare Pages project named `card-sort` by default. To use a different existing Pages project name, add a GitHub repository variable under **Settings > Secrets and variables > Actions > Variables**:
+
+- `CLOUDFLARE_PAGES_PROJECT_NAME`: the exact Cloudflare Pages project name.
+
+If deployment fails with `Project not found`, check that:
+
+1. The Pages project exists in the Cloudflare account identified by `CLOUDFLARE_ACCOUNT_ID`.
+2. The project name matches `CLOUDFLARE_PAGES_PROJECT_NAME`, or `card-sort` if that variable is unset.
+3. The API token is scoped to the same account as the Pages project.
