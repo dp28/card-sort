@@ -127,6 +127,7 @@ label {
 }
 
 textarea,
+input,
 .share-panel input {
   width: 100%;
   border: 1px solid #403454;
@@ -146,9 +147,16 @@ textarea::placeholder {
 }
 
 textarea:focus,
+input:focus,
 .share-panel input:focus {
   border-color: #8b5cf6;
   outline: 3px solid rgba(139, 92, 246, 0.24);
+}
+
+.field-group,
+.add-items-form {
+  display: grid;
+  gap: 0.55rem;
 }
 
 .form-actions,
@@ -214,6 +222,20 @@ textarea:focus,
 .sorting-panel {
   display: grid;
   gap: 1rem;
+}
+
+.utility-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.utility-panel h2 {
+  margin-bottom: 0.15rem;
+}
+
+.utility-panel p {
+  margin-bottom: 0;
+  color: #b8add2;
 }
 
 .progress-header {
@@ -287,6 +309,22 @@ textarea:focus,
   gap: 0.6rem;
   margin: 1rem 0;
   padding-left: 1.5rem;
+}
+
+.list-title {
+  margin-bottom: 1rem;
+  border: 1px solid #302743;
+  border-radius: 0.95rem;
+  padding: 0.8rem 0.9rem;
+  background: #100d18;
+}
+
+.list-title .eyebrow {
+  margin-bottom: 0.25rem;
+}
+
+.list-title h3 {
+  margin-bottom: 0;
 }
 
 .result-list li,

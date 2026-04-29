@@ -17,6 +17,7 @@ type Comparison = {
 type SortState = {
   version: 1;
   sessionId: string;
+  title: string;
   items: SortItem[];
   sortedIds: string[];
   pendingIds: string[];
@@ -39,13 +40,14 @@ type ActiveInsertion = {
 
 type HistoryEntry = {
   id: string;
+  title: string;
   completedAt: string;
   items: string[];
   orderedItems: string[];
   comparisons: number;
 };
 
-type ShareState = Pick<SortState, 'items' | 'sortedIds' | 'pendingIds' | 'active' | 'comparisons' | 'phase'>;
+type ShareState = Pick<SortState, 'title' | 'items' | 'sortedIds' | 'pendingIds' | 'active' | 'comparisons' | 'phase'>;
 
 function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${canUseRandomUuid ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`;
@@ -55,6 +57,7 @@ function createInitialState(): SortState {
   return {
     version: 1,
     sessionId: createId('sort'),
+    title: '',
     items: [],
     sortedIds: [],
     pendingIds: [],
@@ -72,7 +75,7 @@ function createItem(label: string, index: number): SortItem {
   };
 }
 
-function normalizeItems(input: string): SortItem[] {
+function parseItemLabels(input: string): string[] {
   const seen = new Set<string>();
 
   return input
@@ -87,19 +90,28 @@ function normalizeItems(input: string): SortItem[] {
       seen.add(key);
       return true;
     })
+}
+
+function normalizeItems(input: string): SortItem[] {
+  return parseItemLabels(input)
     .map(createItem);
 }
 
-function startSorting(items: SortItem[]): SortState {
+function startSorting(items: SortItem[], title = ''): SortState {
   const initialState = createInitialState();
+  const trimmedTitle = title.trim();
 
   if (items.length === 0) {
-    return initialState;
+    return {
+      ...initialState,
+      title: trimmedTitle,
+    };
   }
 
   if (items.length === 1) {
     return {
       ...initialState,
+      title: trimmedTitle,
       items,
       sortedIds: [items[0].id],
       phase: 'done',
@@ -108,6 +120,7 @@ function startSorting(items: SortItem[]): SortState {
 
   return {
     ...initialState,
+    title: trimmedTitle,
     items,
     sortedIds: [items[0].id],
     pendingIds: items.slice(1).map((item) => item.id),
@@ -267,6 +280,7 @@ function sanitizeState(value: unknown, suppressCompletedHistory = false): SortSt
   return ensureActiveInsertion({
     version: 1,
     sessionId: typeof candidate.sessionId === 'string' ? candidate.sessionId : createId('sort'),
+    title: typeof candidate.title === 'string' ? candidate.title : '',
     items,
     sortedIds,
     pendingIds,
@@ -279,6 +293,7 @@ function sanitizeState(value: unknown, suppressCompletedHistory = false): SortSt
 
 function encodeShareState(state: SortState): string {
   const shareState: ShareState = {
+    title: state.title,
     items: state.items,
     sortedIds: state.sortedIds,
     pendingIds: state.pendingIds,
@@ -363,6 +378,7 @@ function loadHistory(): HistoryEntry[] {
 function createHistoryEntry(state: SortState): HistoryEntry {
   return {
     id: state.sessionId,
+    title: state.title,
     completedAt: new Date().toISOString(),
     items: state.items.map((item) => item.label),
     orderedItems: getOrderedItems(state).map((item) => item.label),
@@ -381,6 +397,8 @@ function App() {
   const [initialSnapshot] = useState(loadInitialSnapshot);
   const [state, setState] = useState<SortState>(() => initialSnapshot.state);
   const [rawItems, setRawItems] = useState(() => initialSnapshot.rawItems);
+  const [listTitle, setListTitle] = useState(() => initialSnapshot.state.title);
+  const [newItems, setNewItems] = useState('');
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [shareUrl, setShareUrl] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
@@ -422,16 +440,18 @@ function App() {
     const items = normalizeItems(rawItems);
     setShareUrl('');
     setCopyStatus('');
-    setState(saveCompletedSort(ensureActiveInsertion(startSorting(items))));
+    setState(saveCompletedSort(ensureActiveInsertion(startSorting(items, listTitle))));
   }
 
-  function handleResort(labels: string[]) {
+  function handleResort(labels: string[], title = '') {
     const nextRawItems = labels.join('\n');
     const items = normalizeItems(nextRawItems);
     setRawItems(nextRawItems);
+    setListTitle(title);
+    setNewItems('');
     setShareUrl('');
     setCopyStatus('');
-    setState(saveCompletedSort(ensureActiveInsertion(startSorting(items))));
+    setState(saveCompletedSort(ensureActiveInsertion(startSorting(items, title))));
   }
 
   function handleChoose(winnerId: string) {
@@ -444,6 +464,8 @@ function App() {
     setShareUrl('');
     setCopyStatus('');
     setRawItems(state.items.map((item) => item.label).join('\n'));
+    setListTitle(state.title);
+    setNewItems('');
     setState({
       ...state,
       phase: 'entry',
@@ -453,9 +475,62 @@ function App() {
 
   function handleReset() {
     setRawItems('');
+    setListTitle('');
+    setNewItems('');
     setShareUrl('');
     setCopyStatus('');
     setState(createInitialState());
+  }
+
+  function handleTitleChange(value: string) {
+    setListTitle(value);
+    setShareUrl('');
+    setCopyStatus('');
+    if (state.phase === 'done') {
+      setHistory((currentHistory) =>
+        currentHistory.map((entry) => (entry.id === state.sessionId ? { ...entry, title: value } : entry)),
+      );
+    }
+    setState((currentState) => ({
+      ...currentState,
+      title: value,
+    }));
+  }
+
+  function handleAddItems(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const labelsToAdd = parseItemLabels(newItems);
+
+    if (labelsToAdd.length === 0) {
+      return;
+    }
+
+    setShareUrl('');
+    setCopyStatus('');
+    setState((currentState) => {
+      const existingLabels = new Set(currentState.items.map((item) => item.label.toLocaleLowerCase()));
+      const additions = labelsToAdd
+        .filter((label) => !existingLabels.has(label.toLocaleLowerCase()))
+        .map((label, index) => createItem(label, currentState.items.length + index));
+
+      if (additions.length === 0) {
+        return currentState;
+      }
+
+      setRawItems([...currentState.items.map((item) => item.label), ...additions.map((item) => item.label)].join('\n'));
+      setNewItems('');
+
+      const nextState: SortState = {
+        ...currentState,
+        sessionId: currentState.phase === 'done' ? createId('sort') : currentState.sessionId,
+        items: [...currentState.items, ...additions],
+        pendingIds: [...currentState.pendingIds, ...additions.map((item) => item.id)],
+        phase: currentState.phase === 'done' ? 'sorting' : currentState.phase,
+        historyRecorded: false,
+      };
+
+      return ensureActiveInsertion(nextState);
+    });
   }
 
   function handleClearHistory() {
@@ -491,6 +566,16 @@ function App() {
       {state.phase === 'entry' && (
         <section className="panel">
           <form onSubmit={handleStart}>
+            <div className="field-stack">
+              <label htmlFor="list-title">List title or question</label>
+              <input
+                id="list-title"
+                className="title-input"
+                value={listTitle}
+                onChange={(event) => handleTitleChange(event.target.value)}
+                placeholder="Best trip ideas, next project, dinner options..."
+              />
+            </div>
             <div>
               <label htmlFor="items">Items to sort</label>
               <p className="field-hint">Enter one item per line. Duplicates are removed before sorting.</p>
@@ -516,12 +601,32 @@ function App() {
         </section>
       )}
 
+      {state.phase !== 'entry' && (
+        <section className="panel utility-panel">
+          <div>
+            <p className="eyebrow">Current list</p>
+            <h2>List details</h2>
+            <p>Name the category you are sorting or the question this list answers.</p>
+          </div>
+          <div className="field-stack">
+            <label htmlFor="active-list-title">List title or question</label>
+            <input
+              id="active-list-title"
+              className="title-input"
+              value={listTitle}
+              onChange={(event) => handleTitleChange(event.target.value)}
+              placeholder="Best trip ideas, next project, dinner options..."
+            />
+          </div>
+        </section>
+      )}
+
       {state.phase === 'sorting' && currentPair && (
         <section className="panel sorting-panel" aria-live="polite">
           <div className="progress-header">
             <div>
               <p className="eyebrow">Choose your preference</p>
-              <h2>Which should rank higher?</h2>
+              <h2>{state.title || 'Which should rank higher?'}</h2>
             </div>
             <span>{progress}% placed</span>
           </div>
@@ -544,11 +649,32 @@ function App() {
             {placedItems} of {totalItems} items placed; {completedComparisons} comparisons made
           </p>
 
+          <form className="add-items-form" onSubmit={handleAddItems}>
+            <div>
+              <label htmlFor="new-items">Add items to this sort</label>
+              <p className="field-hint">New items will be compared after the current choice path.</p>
+            </div>
+            <textarea
+              id="new-items"
+              value={newItems}
+              onChange={(event) => setNewItems(event.target.value)}
+              placeholder={'One new item per line'}
+              rows={3}
+            />
+            <button type="submit" className="ghost-button" disabled={parseItemLabels(newItems).length === 0}>
+              Add to sort
+            </button>
+          </form>
+
           <div className="secondary-actions">
             <button type="button" className="ghost-button" onClick={handleShare}>
               Copy share link
             </button>
-            <button type="button" className="ghost-button" onClick={() => handleResort(state.items.map((item) => item.label))}>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => handleResort(state.items.map((item) => item.label), state.title)}
+            >
               Re-sort this list
             </button>
             <button type="button" className="ghost-button" onClick={handleEditList}>
@@ -563,7 +689,7 @@ function App() {
           <div className="progress-header">
             <div>
               <p className="eyebrow">Sorted result</p>
-              <h2>Your ordered list</h2>
+              <h2>{state.title || 'Your ordered list'}</h2>
             </div>
             <span>{completedComparisons} picks</span>
           </div>
@@ -574,6 +700,23 @@ function App() {
             ))}
           </ol>
 
+          <form className="add-items-form" onSubmit={handleAddItems}>
+            <div>
+              <label htmlFor="new-items-done">Add items and keep sorting</label>
+              <p className="field-hint">Added items will be inserted into this completed order with new comparisons.</p>
+            </div>
+            <textarea
+              id="new-items-done"
+              value={newItems}
+              onChange={(event) => setNewItems(event.target.value)}
+              placeholder={'One new item per line'}
+              rows={3}
+            />
+            <button type="submit" className="ghost-button" disabled={parseItemLabels(newItems).length === 0}>
+              Add and compare
+            </button>
+          </form>
+
           <div className="secondary-actions">
             <button type="button" className="primary-button" onClick={handleShare}>
               Copy share link
@@ -581,7 +724,11 @@ function App() {
             <button type="button" className="ghost-button" onClick={handleEditList}>
               Sort another list
             </button>
-            <button type="button" className="ghost-button" onClick={() => handleResort(state.items.map((item) => item.label))}>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => handleResort(state.items.map((item) => item.label), state.title)}
+            >
               Re-sort this list
             </button>
             <button type="button" className="ghost-button" onClick={handleReset}>
@@ -619,12 +766,16 @@ function App() {
               <article className="history-card" key={entry.id}>
                 <div className="history-card-header">
                   <div>
-                    <h3>{formatCompletedAt(entry.completedAt)}</h3>
+                    <h3>{entry.title || 'Untitled list'}</h3>
                     <p>
-                      {entry.items.length} items; {entry.comparisons} comparisons
+                      {formatCompletedAt(entry.completedAt)}; {entry.items.length} items; {entry.comparisons} comparisons
                     </p>
                   </div>
-                  <button type="button" className="ghost-button compact-button" onClick={() => handleResort(entry.items)}>
+                  <button
+                    type="button"
+                    className="ghost-button compact-button"
+                    onClick={() => handleResort(entry.items, entry.title)}
+                  >
                     Re-sort
                   </button>
                 </div>
